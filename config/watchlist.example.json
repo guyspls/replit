@@ -1,0 +1,107 @@
+{
+  "_readme": "Copy to config/watchlist.json and edit. Secrets go in .env, never here.",
+
+  "defaults": {
+    "intervalMs": 60000,
+    "hotIntervalMs": 3000,
+    "jitterRatio": 0.15,
+    "cooldownMs": 900000,
+    "alertBurst": 3,
+    "burstWindowMs": 600000,
+    "minHostGapMs": 1000,
+    "respectRobots": true,
+    "hotBeforeMs": 900000,
+    "hotAfterMs": 1800000,
+    "maxConcurrency": 6
+  },
+
+  "notifications": {
+    "_readme": "Fill these from .env instead of inline. desktop:false turns off the local banner.",
+    "desktop": true
+  },
+
+  "targets": [
+    {
+      "_readme": "Working demo against a site that exists to be scraped. Run `npm run check -- demo-book`.",
+      "id": "demo-book",
+      "name": "Demo: A Light in the Attic",
+      "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+      "intervalMs": 300000,
+      "maxPrice": 100,
+      "currency": "GBP"
+    },
+    {
+      "_readme": "Typical real target. Defaults handle most storefronts with no signals block at all.",
+      "id": "example-console",
+      "name": "Example Console (edit me)",
+      "url": "https://example.com/product/console",
+      "buyUrl": "https://example.com/cart/add?sku=123",
+      "enabled": false,
+      "intervalMs": 45000,
+      "hotIntervalMs": 2000,
+      "maxPrice": 599.99,
+      "dropAt": "2026-09-12T14:00:00Z",
+      "alertOnChange": true
+    },
+    {
+      "_readme": "A stubborn site taught by hand. Custom buckets replace the defaults for that bucket only.",
+      "id": "example-custom-rules",
+      "name": "Example with custom rules",
+      "url": "https://example.com/product/gpu",
+      "enabled": false,
+      "signals": {
+        "in_stock": [
+          { "type": "selector", "selector": "button[data-testid='add-to-cart']:not([disabled])", "op": "exists" },
+          { "type": "json", "path": "product.variants[].available", "op": "truthy" }
+        ],
+        "out_of_stock": [
+          { "type": "selector", "selector": ".sold-out-badge", "op": "exists" }
+        ],
+        "coming_soon": [
+          { "type": "text", "op": "matches", "value": "notify me when available" }
+        ]
+      },
+      "priceSignals": [
+        { "type": "json", "path": "product.price", "op": "exists" }
+      ]
+    }
+  ],
+
+  "discovery": [
+    {
+      "_readme": "Watches a sitemap for product URLs matching your keywords — often live days before the listing is.",
+      "id": "example-sitemap",
+      "kind": "sitemap",
+      "enabled": false,
+      "url": "https://example.com/sitemap_products.xml",
+      "keywords": ["/rtx.?5090/", "founders edition"],
+      "exclude": ["refurbished", "bundle"],
+      "intervalMs": 900000,
+      "autoWatch": true,
+      "watchTemplate": { "intervalMs": 30000, "maxPrice": 2199 }
+    },
+    {
+      "_readme": "Polls a storefront's own search API. itemsPath/urlPath/titlePath are dotted paths, [] maps an array.",
+      "id": "example-search",
+      "kind": "search",
+      "enabled": false,
+      "url": "https://example.com/api/search?q={query}",
+      "query": "rtx 5090",
+      "keywords": ["5090"],
+      "itemsPath": "results[]",
+      "urlPath": "url",
+      "titlePath": "title",
+      "idPath": "sku",
+      "intervalMs": 600000
+    },
+    {
+      "_readme": "Any RSS/Atom feed — restock trackers, deal feeds, brand blogs.",
+      "id": "example-feed",
+      "kind": "feed",
+      "enabled": false,
+      "url": "https://example.com/deals.rss",
+      "keywords": ["5090", "restock"],
+      "intervalMs": 600000
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "scalper-bot",
+  "version": "1.0.0",
+  "description": "Watches product pages and tells you the second something is buyable — with early warning when the site leaks it first.",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "scalper": "src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js watch",
+    "check": "node src/index.js check",
+    "discover": "node src/index.js discover",
+    "status": "node src/index.js status",
+    "test-notify": "node src/index.js test-notify",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2"
+  },
+  "optionalDependencies": {},
+  "license": "MIT",
+  "private": true
+}

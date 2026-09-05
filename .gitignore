@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.log
+
+# Runtime state — machine-local, holds last-seen page hashes and alert timestamps.
+data/
+config/watchlist.json
