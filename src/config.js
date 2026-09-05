@@ -82,8 +82,22 @@ export async function loadConfig(file) {
   }
 
   const defaults = { ...DEFAULTS, ...(parsed.defaults ?? {}) };
-  const targets = (parsed.targets ?? []).map((t, i) => normalizeTarget(t, i, defaults));
-  const discovery = (parsed.discovery ?? []).map((d, i) => normalizeDiscovery(d, i, defaults));
+
+  // A watchlist spanning several retailers should not be unusable because one
+  // of them needs an API key you have not set up yet. Disable that entry, say
+  // so once, and let the rest run.
+  const skipMissingEnv = (normalize) => (entry, i) => {
+    try {
+      return normalize(entry, i, defaults);
+    } catch (err) {
+      if (!(err instanceof MissingEnvError)) throw err;
+      log.warn(`${err.message} — that entry is disabled for this run`);
+      return { ...entry, id: entry.id ?? `entry-${i}`, enabled: false, disabledReason: err.message };
+    }
+  };
+
+  const targets = (parsed.targets ?? []).map(skipMissingEnv(normalizeTarget));
+  const discovery = (parsed.discovery ?? []).map(skipMissingEnv(normalizeDiscovery));
 
   const ids = new Set();
   for (const t of [...targets, ...discovery]) {
@@ -105,11 +119,43 @@ export async function loadConfig(file) {
   };
 }
 
+/**
+ * Expands ${VAR} against the environment so API keys and store ids live in
+ * .env rather than in a watchlist you might commit or paste into a chat.
+ */
+export class MissingEnvError extends Error {
+  constructor(name, where) {
+    super(`${where} needs ${name}, which is not set — add ${name} to your .env`);
+    this.name = 'MissingEnvError';
+    this.variable = name;
+  }
+}
+
+export function expandEnv(value, where) {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\$\{([A-Z0-9_]+)\}/gi, (_, name) => {
+    const found = process.env[name];
+    if (found === undefined || found === '') throw new MissingEnvError(name, where);
+    return found;
+  });
+}
+
+function expandHeaders(headers, where) {
+  if (!headers) return headers;
+  return Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, expandEnv(v, `${where}.headers.${k}`)]));
+}
+
 function normalizeTarget(target, index, defaults) {
   const where = target.id ?? target.name ?? `targets[${index}]`;
   if (!target.url) throw new Error(`${where}: "url" is required`);
-  assertHttpUrl(target.url, `${where}.url`);
+  const url = expandEnv(target.url, `${where}.url`);
+  assertHttpUrl(url, `${where}.url`);
   if (target.buyUrl) assertHttpUrl(target.buyUrl, `${where}.buyUrl`);
+
+  const mode = target.mode ?? 'http';
+  if (mode !== 'http' && mode !== 'browser') {
+    throw new Error(`${where}: "mode" must be "http" or "browser", got "${mode}"`);
+  }
 
   const id = target.id ?? slug(target.name ?? new URL(target.url).pathname);
   const dropAt = target.dropAt ? Date.parse(target.dropAt) : null;
@@ -123,6 +169,9 @@ function normalizeTarget(target, index, defaults) {
   return {
     ...target,
     id,
+    url,
+    mode,
+    headers: expandHeaders(target.headers, where),
     name: target.name ?? id,
     enabled: target.enabled !== false,
     intervalMs,
@@ -147,11 +196,14 @@ function normalizeDiscovery(source, index, defaults) {
     throw new Error(`${where}: "kind" must be one of ${kinds.join(', ')}`);
   }
   if (!source.url) throw new Error(`${where}: "url" is required`);
-  assertHttpUrl(source.url.replace('{query}', 'x'), `${where}.url`);
+  const url = expandEnv(source.url, `${where}.url`);
+  assertHttpUrl(url.replace('{query}', 'x'), `${where}.url`);
   if (!source.keywords?.length) throw new Error(`${where}: "keywords" must be a non-empty array`);
 
   return {
     ...source,
+    url,
+    headers: expandHeaders(source.headers, where),
     id: source.id ?? slug(`${source.kind}-${index}`),
     enabled: source.enabled !== false,
     intervalMs: Math.max(source.intervalMs ?? 10 * 60_000, 30_000),

@@ -114,28 +114,77 @@ function flattenJsonLd(node, seen = new Set()) {
 }
 
 /**
- * Reads a dotted path out of an object. Supports array indexes (`a.0.b`) and
- * a `[]` wildcard that maps across an array (`items[].sku`).
+ * Reads a dotted path out of an object.
+ *
+ * Segments support three bracket forms:
+ *   `items[]`            — map across every element
+ *   `items[available]`   — keep elements whose `available` is truthy
+ *   `items[state=live]`  — keep elements whose `state` equals "live"
+ *
+ * The filter forms matter more than they look: a storefront that lists five
+ * variants needs "the price of the one you can actually buy", and
+ * `variants[available].price` is the difference between alerting with the right
+ * number and alerting with the first number on the page.
  */
 export function getPath(obj, path) {
   if (!path) return obj;
   let cursor = [obj];
-  for (const rawSeg of String(path).split('.')) {
+  for (const rawSeg of splitPath(String(path))) {
     if (rawSeg === '') continue;
-    const wildcard = rawSeg.endsWith('[]');
-    const seg = wildcard ? rawSeg.slice(0, -2) : rawSeg;
+    const { key, bracket } = parseSegment(rawSeg);
     const next = [];
     for (const node of cursor) {
       if (node === null || node === undefined) continue;
-      const value = seg === '' ? node : node[seg];
+      const value = key === '' ? node : node[key];
       if (value === undefined) continue;
-      if (wildcard && Array.isArray(value)) next.push(...value);
+      if (bracket !== null && Array.isArray(value)) next.push(...applyFilter(value, bracket));
       else next.push(value);
     }
     cursor = next;
     if (cursor.length === 0) return undefined;
   }
   return cursor.length === 1 ? cursor[0] : cursor;
+}
+
+/** Splits on dots that sit outside brackets, so `a[x.y=1].b` stays intact. */
+function splitPath(path) {
+  const out = [];
+  let current = '';
+  let depth = 0;
+  for (const ch of path) {
+    if (ch === '[') depth += 1;
+    else if (ch === ']') depth = Math.max(0, depth - 1);
+    if (ch === '.' && depth === 0) {
+      out.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  out.push(current);
+  return out;
+}
+
+function parseSegment(segment) {
+  const match = segment.match(/^(.*?)\[([^\]]*)\]$/);
+  if (!match) return { key: segment, bracket: null };
+  return { key: match[1], bracket: match[2] };
+}
+
+function applyFilter(array, bracket) {
+  if (bracket === '') return array; // plain [] wildcard
+  const eq = bracket.indexOf('=');
+  if (eq === -1) {
+    const field = bracket.trim();
+    return array.filter((item) => isTruthy(item?.[field]));
+  }
+  const field = bracket.slice(0, eq).trim();
+  const expected = bracket.slice(eq + 1).trim();
+  return array.filter((item) => String(item?.[field] ?? '').toLowerCase() === expected.toLowerCase());
+}
+
+function isTruthy(v) {
+  return Boolean(v) && v !== 'false' && v !== '0';
 }
 
 /** Pulls a number out of "$1,299.99", "USD 34.50", "1.299,99 €" and friends. */

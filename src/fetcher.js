@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { logger } from './logger.js';
 import { RobotsCache } from './robots.js';
 import { createPage } from './extract.js';
+import { BrowserSession } from './browser.js';
 
 const log = logger('fetch');
 
@@ -62,6 +63,20 @@ export class Fetcher {
     this.limiter = new HostLimiter(minHostGapMs);
     this.robots = new RobotsCache({ fetchImpl, userAgent });
     this.backoffUntil = new Map();
+    this.browserSession = null; // started lazily, only if a target asks for it
+  }
+
+  /** Shared across every browser-mode target, so one Chromium serves them all. */
+  browser() {
+    if (!this.browserSession) {
+      this.browserSession = new BrowserSession({ userAgent: this.userAgent, timeoutMs: this.timeoutMs * 2 });
+    }
+    return this.browserSession;
+  }
+
+  async close() {
+    if (this.browserSession) await this.browserSession.close();
+    this.browserSession = null;
   }
 
   /**
@@ -69,7 +84,7 @@ export class Fetcher {
    * `notModified` is true when the server answered 304, in which case the
    * caller can skip parsing entirely and reuse the previous state.
    */
-  async get(url, { etag, lastModified, headers = {}, respectRobots, method = 'GET' } = {}) {
+  async get(url, { etag, lastModified, headers = {}, respectRobots, method = 'GET', mode = 'http', browser } = {}) {
     const host = new URL(url).host;
 
     const blockedUntil = this.backoffUntil.get(host) ?? 0;
@@ -87,9 +102,45 @@ export class Fetcher {
       if (verdict.crawlDelay) this.limiter.setGap(host, verdict.crawlDelay * 1000);
     }
 
+    // Browser mode reuses the same politeness machinery: robots above, and the
+    // per-host queue below, so rendering does not become a way to poll harder.
+    if (mode === 'browser') {
+      return this.limiter.run(host, () => this.renderAttempt(url, { headers, host, ...browser }));
+    }
+
     return this.limiter.run(host, () =>
       this.attempt(url, { etag, lastModified, headers, method, host }),
     );
+  }
+
+  async renderAttempt(url, opts) {
+    const startedAt = Date.now();
+    let rendered;
+    try {
+      rendered = await this.browser().get(url, opts);
+    } catch (err) {
+      return { error: `browser: ${err.message}`, elapsedMs: Date.now() - startedAt };
+    }
+
+    const { status, headers, body } = rendered;
+    if (status === 429 || status === 503) {
+      const waitMs = retryAfterMs(headers['retry-after']) ?? backoffMs(2);
+      this.backoffUntil.set(opts.host, Date.now() + waitMs);
+      return { status, headers, throttled: true, waitMs, elapsedMs: Date.now() - startedAt };
+    }
+
+    return {
+      status,
+      headers,
+      body,
+      url: rendered.url,
+      etag: null, // conditional requests do not apply to a rendered page
+      lastModified: null,
+      hash: hashBody(body),
+      elapsedMs: Date.now() - startedAt,
+      rendered: true,
+      page: createPage({ url: rendered.url, status, headers, body }),
+    };
   }
 
   async attempt(url, opts, retry = 0) {

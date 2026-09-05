@@ -11,7 +11,12 @@ const log = logger('discover');
  */
 export async function runDiscovery(source, { fetcher, store }) {
   const url = source.url.replace('{query}', encodeURIComponent(source.query ?? source.keywords[0]));
-  const res = await fetcher.get(url, { respectRobots: source.respectRobots });
+  const res = await fetcher.get(url, {
+    respectRobots: source.respectRobots,
+    headers: source.headers,
+    mode: source.mode,
+    browser: source.browser,
+  });
 
   if (res.skipped) return { skipped: true, reason: res.reason, items: [] };
   if (res.error) return { error: res.error, items: [] };

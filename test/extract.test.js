@@ -74,3 +74,32 @@ test('header lookups are case-insensitive on the normalized object', () => {
   assert.deepEqual(resolveSource(p, { type: 'header', name: 'ETag' }).values, ['"abc"']);
   assert.equal(resolveSource(p, { type: 'header', name: 'missing' }).found, false);
 });
+
+test('a path filter selects the variant that is actually buyable', () => {
+  const api = {
+    products: [
+      { sku: 1, salePrice: 699.99, onlineAvailability: false, orderable: 'SoldOut' },
+      { sku: 2, salePrice: 749.99, onlineAvailability: true, orderable: 'Available' },
+    ],
+  };
+  // The whole point: the price you are told must be the price of the one you
+  // can buy, not whichever SKU happened to be listed first.
+  assert.equal(getPath(api, 'products[onlineAvailability].salePrice'), 749.99);
+  assert.equal(getPath(api, 'products[orderable=Available].salePrice'), 749.99);
+  assert.equal(getPath(api, 'products[orderable=SoldOut].sku'), 1);
+  assert.equal(getPath(api, 'products[orderable=ComingSoon].salePrice'), undefined);
+  assert.deepEqual(getPath(api, 'products[].salePrice'), [699.99, 749.99]);
+});
+
+test('filters treat "false" and "0" strings as falsy, like the operators do', () => {
+  const obj = { v: [{ a: 'false', id: 1 }, { a: '0', id: 2 }, { a: 'true', id: 3 }] };
+  assert.equal(getPath(obj, 'v[a].id'), 3);
+});
+
+test('path splitting is bracket-aware so dots inside a filter survive', () => {
+  assert.equal(getPath({ a: [{ b: { c: 7 }, k: 'x' }] }, 'a[k=x].b.c'), 7);
+});
+
+test('a filter on a non-array value passes it through untouched', () => {
+  assert.equal(getPath({ a: { b: 1 } }, 'a[nope].b'), 1);
+});

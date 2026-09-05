@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadConfig, slug, DEFAULTS } from '../src/config.js';
+import { loadConfig, slug, expandEnv, MissingEnvError, DEFAULTS } from '../src/config.js';
 import { parseArgs } from '../src/index.js';
 import { tempDir } from './helpers.js';
 
@@ -137,4 +137,111 @@ test('the CLI argument parser handles flags, values and inline forms', () => {
   assert.deepEqual(parseArgs(['--config=/tmp/w.json']), { _: [], flags: { config: '/tmp/w.json' } });
   assert.deepEqual(parseArgs(['add', 'https://x/p', '--max-price', '99']), { _: ['add', 'https://x/p'], flags: { 'max-price': '99' } });
   assert.deepEqual(parseArgs(['watch', '--once', '--log', 'warn']), { _: ['watch'], flags: { once: true, log: 'warn' } });
+});
+
+test('${VAR} in a URL is expanded from the environment', async () => {
+  process.env.TEST_API_KEY = 'secret123';
+  try {
+    await withConfig({ targets: [{ id: 'a', url: 'https://api.test/v1?apiKey=${TEST_API_KEY}&x=1' }] }, async (file) => {
+      const cfg = await loadConfig(file);
+      assert.equal(cfg.targets[0].url, 'https://api.test/v1?apiKey=secret123&x=1');
+    });
+  } finally {
+    delete process.env.TEST_API_KEY;
+  }
+});
+
+test('headers are expanded too, so tokens stay out of the watchlist', async () => {
+  process.env.TEST_TOKEN = 'tok_abc';
+  try {
+    await withConfig(
+      { targets: [{ id: 'a', url: 'https://api.test/v1', headers: { authorization: 'Bearer ${TEST_TOKEN}' } }] },
+      async (file) => {
+        const cfg = await loadConfig(file);
+        assert.equal(cfg.targets[0].headers.authorization, 'Bearer tok_abc');
+      },
+    );
+  } finally {
+    delete process.env.TEST_TOKEN;
+  }
+});
+
+test('one missing key disables only its own entry, never the whole watchlist', async () => {
+  delete process.env.ABSENT_KEY;
+  await withConfig(
+    {
+      targets: [
+        { id: 'needs-key', url: 'https://api.test/v1?apiKey=${ABSENT_KEY}' },
+        { id: 'fine', url: 'https://s.test/p' },
+      ],
+    },
+    async (file) => {
+      const cfg = await loadConfig(file);
+      const [broken, fine] = cfg.targets;
+      assert.equal(broken.enabled, false);
+      assert.match(broken.disabledReason, /ABSENT_KEY/);
+      assert.equal(fine.enabled, true, 'the other retailer still runs');
+    },
+  );
+});
+
+test('expandEnv names the variable and where it was needed', () => {
+  delete process.env.NOPE_KEY;
+  assert.throws(() => expandEnv('https://x/${NOPE_KEY}', 'bestbuy.url'), (err) => {
+    assert.ok(err instanceof MissingEnvError);
+    assert.equal(err.variable, 'NOPE_KEY');
+    assert.match(err.message, /bestbuy\.url needs NOPE_KEY/);
+    return true;
+  });
+  assert.equal(expandEnv('no placeholders here', 'x'), 'no placeholders here');
+  assert.equal(expandEnv(42, 'x'), 42);
+});
+
+test('mode must be http or browser', async () => {
+  await withConfig({ targets: [{ id: 'a', url: 'https://s.test/p', mode: 'telepathy' }] }, (f) =>
+    assert.rejects(() => loadConfig(f), /"mode" must be "http" or "browser"/),
+  );
+  await withConfig({ targets: [{ id: 'a', url: 'https://s.test/p', mode: 'browser' }] }, async (f) => {
+    assert.equal((await loadConfig(f)).targets[0].mode, 'browser');
+  });
+  await withConfig({ targets: [{ id: 'a', url: 'https://s.test/p' }] }, async (f) => {
+    assert.equal((await loadConfig(f)).targets[0].mode, 'http', 'plain HTTP stays the default');
+  });
+});
+
+test('the shipped PS5 Pro watchlist is valid and safe to run as-is', async () => {
+  process.env.BESTBUY_API_KEY = 'test-key';
+  try {
+    const cfg = await loadConfig('config/ps5-pro.example.json');
+    assert.ok(cfg.targets.length >= 8, 'covers the major retailers');
+    assert.ok(cfg.targets.every((t) => t.url.startsWith('https://')));
+    assert.ok(cfg.targets.every((t) => t.mode === 'http' || t.mode === 'browser'));
+
+    // Every retailer that renders stock in JavaScript must say so.
+    for (const id of ['target', 'walmart', 'amazon']) {
+      assert.equal(cfg.targets.find((t) => t.id === id).mode, 'browser', `${id} needs browser mode`);
+    }
+
+    // Browser targets are expensive, so they must not poll at HTTP cadence.
+    for (const t of cfg.targets.filter((x) => x.mode === 'browser')) {
+      assert.ok(t.hotIntervalMs >= 20_000, `${t.id} polls too hard for a rendered page`);
+    }
+
+    // Only the official API is on by default; scraping targets are opt-in.
+    const enabled = cfg.targets.filter((t) => t.enabled).map((t) => t.id);
+    assert.deepEqual(enabled, ['bestbuy-api']);
+
+    const bestbuy = cfg.targets.find((t) => t.id === 'bestbuy-api');
+    assert.ok(bestbuy.url.includes('apiKey=test-key'), 'the key is injected from the environment');
+    assert.equal(bestbuy.maxPrice, 800);
+  } finally {
+    delete process.env.BESTBUY_API_KEY;
+  }
+});
+
+test('the PS5 Pro watchlist loads without any API key at all', async () => {
+  delete process.env.BESTBUY_API_KEY;
+  const cfg = await loadConfig('config/ps5-pro.example.json');
+  assert.equal(cfg.targets.find((t) => t.id === 'bestbuy-api').enabled, false);
+  assert.ok(cfg.targets.length >= 8, 'the other retailers survive');
 });

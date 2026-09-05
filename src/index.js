@@ -32,6 +32,8 @@ Options
   --interval <sec>    For "add": seconds between checks
   --drop-at <iso>     For "add": known drop time, e.g. 2026-09-12T14:00:00Z
   --user-agent <ua>   Override the request user agent
+  --browser           For "check" on a URL: render with headless Chromium
+  --wait-for <sel>    For "check --browser": wait for this selector first
 
 Environment (secrets live here, not in the watchlist)
   NTFY_TOPIC, DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
@@ -80,6 +82,7 @@ const commands = {
       log.info(`${signal} received, saving state and exiting`);
       watcher.stop();
       await store.flush(true);
+      await fetcher.close();
       process.exit(0);
     };
     process.on('SIGINT', () => shutdown('SIGINT'));
@@ -90,6 +93,7 @@ const commands = {
     }
 
     const stats = await watcher.run({ maxCycles: args.flags.once ? 1 : Infinity });
+    await fetcher.close();
     log.info(`done: ${stats.checks} checks, ${stats.alerts} alerts, ${stats.errors} errors`);
   },
 
@@ -101,7 +105,15 @@ const commands = {
     const target =
       config.targets.find((t) => t.id === which || t.url === which) ??
       (which.startsWith('http')
-        ? { ...DEFAULTS, id: 'ad-hoc', name: which, url: which, respectRobots: config.defaults.respectRobots }
+        ? {
+            ...DEFAULTS,
+            id: 'ad-hoc',
+            name: which,
+            url: which,
+            respectRobots: config.defaults.respectRobots,
+            mode: args.flags.browser ? 'browser' : 'http',
+            browser: args.flags['wait-for'] ? { waitFor: String(args.flags['wait-for']) } : undefined,
+          }
         : null);
     if (!target) throw new Error(`no target with id "${which}" — pass a URL to check an unlisted page`);
 
@@ -109,7 +121,17 @@ const commands = {
     process.stdout.write(`\nChecking ${bold(target.name)}\n  ${dim(target.url)}\n\n`);
 
     const started = Date.now();
-    const res = await fetcher.get(target.url, { headers: target.headers, respectRobots: target.respectRobots });
+    let res;
+    try {
+      res = await fetcher.get(target.url, {
+        headers: target.headers,
+        respectRobots: target.respectRobots,
+        mode: target.mode,
+        browser: target.browser,
+      });
+    } finally {
+      await fetcher.close();
+    }
 
     if (res.blockedByRobots) return void process.stdout.write(`  ${red('blocked by robots.txt')} — ${res.reason}\n\n`);
     if (res.skipped) return void process.stdout.write(`  skipped: ${res.reason}\n\n`);
@@ -120,6 +142,7 @@ const commands = {
 
     const line = (k, v) => process.stdout.write(`  ${k.padEnd(14)} ${v}\n`);
     line('HTTP', `${res.status} in ${Date.now() - started}ms (${(res.body?.length ?? 0).toLocaleString()} bytes)`);
+    line('Mode', res.rendered ? 'browser (JavaScript rendered)' : 'http');
     line('State', stateColor(detection.state));
     line('Price', price === null ? dim('not found') : String(price));
     line('Was', record?.state ? String(record.state) : dim('never checked'));
@@ -164,6 +187,7 @@ const commands = {
       }
     }
     await store.flush();
+    await fetcher.close();
     process.stdout.write('\n');
   },
 

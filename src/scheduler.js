@@ -94,6 +94,8 @@ export class Watcher {
       lastModified: record.lastModified,
       headers: target.headers,
       respectRobots: target.respectRobots,
+      mode: target.mode,
+      browser: target.browser,
     });
 
     this.stats.checks += 1;

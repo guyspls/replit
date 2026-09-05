@@ -21,7 +21,9 @@
   "dependencies": {
     "cheerio": "^1.1.2"
   },
-  "optionalDependencies": {},
+  "optionalDependencies": {
+    "playwright": "^1.63.0"
+  },
   "license": "MIT",
   "private": true
 }

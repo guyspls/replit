@@ -38,6 +38,10 @@ Discord, Telegram, Slack, email, and a generic webhook are all supported too —
 `.env.example`. Configure as many as you like; every one fires in parallel, and a dead
 channel never blocks the others.
 
+**Watching a console at the big retailers?** There is a ready-made watchlist at
+`config/ps5-pro.example.json`, and [`docs/retailers.md`](docs/retailers.md) covers which
+retailers actually work, which fight back, and what to do about the ones that do.
+
 ## Watching something
 
 ```bash
@@ -155,6 +159,56 @@ If a page renders its stock state in JavaScript, look for the JSON the page itse
 (Network tab, XHR) and point a target straight at that endpoint — it is faster and far more
 reliable than the HTML.
 
+## Sites that render stock in JavaScript
+
+Most large retailers serve HTML that says nothing about stock and fill it in client-side. For
+those, render the page:
+
+```bash
+npm install playwright && npx playwright install chromium
+```
+
+```json
+{
+  "id": "target",
+  "url": "https://www.target.com/p/...",
+  "mode": "browser",
+  "browser": { "waitFor": "[data-test='shippingButton']", "waitUntil": "networkidle" },
+  "intervalMs": 180000,
+  "hotIntervalMs": 30000
+}
+```
+
+Try it against any URL without editing the config first:
+
+```bash
+node src/index.js check "https://store.example/p/thing" --browser --wait-for "button.add-to-cart"
+```
+
+`waitFor` is the important knob: without it you often capture the page a moment before the
+availability block renders. One Chromium instance is shared by every browser-mode target,
+images and fonts are blocked, and robots.txt is still checked *before* anything launches —
+rendering is not a way around the rules.
+
+It is roughly 50x more expensive per check than plain HTTP, so keep browser targets on
+minute-scale intervals rather than second-scale ones.
+
+This is a real browser loading a page you could load yourself. There is deliberately no
+fingerprint spoofing, proxy rotation, or CAPTCHA solving here. If a retailer still refuses,
+the right answer is their own stock-notification list, not a bigger hammer.
+
+## Keeping API keys out of the watchlist
+
+Any `${VAR}` in a target URL or header is expanded from the environment, so a watchlist stays
+safe to commit:
+
+```json
+{ "url": "https://api.bestbuy.com/v1/products(...)?apiKey=${BESTBUY_API_KEY}&format=json" }
+```
+
+If the variable is not set, that one entry is disabled with a warning naming the variable —
+the rest of the watchlist still runs.
+
 ## Finding things you do not have a URL for yet
 
 ```json
@@ -232,7 +286,10 @@ EnvironmentFile=/home/you/scalper-bot/.env
 | `alwaysHot` | `false` | Stay at `hotIntervalMs` permanently |
 | `alertOnChange` | `false` | Alert on any content change |
 | `buyUrl` | — | Link the alert points at, if different from the watched URL |
-| `headers` | — | Extra request headers for this target |
+| `headers` | — | Extra request headers for this target (supports `${VAR}`) |
+| `mode` | `"http"` | `"browser"` renders the page in headless Chromium |
+| `browser.waitFor` | — | CSS selector to wait for before reading a rendered page |
+| `browser.waitUntil` | `"domcontentloaded"` | Playwright load state (`networkidle` for slow sites) |
 
 ## Behaving well
 
@@ -255,7 +312,7 @@ against one retailer at 1s is not, and will get you blocked long before the drop
 ## Development
 
 ```bash
-npm test                        # 83 tests, no network required
+npm test                        # 101 tests, no network required
 ```
 
 The suite runs a real HTTP server on localhost and drives the full pipeline —
@@ -272,6 +329,7 @@ src/
   detect.js      signal rules + the stock state machine
   scheduler.js   adaptive polling loop
   discovery.js   sitemap / search / feed discovery
+  browser.js     optional headless-Chromium rendering
   state.js       durable state
   notify/        one module per channel + fan-out
 ```

@@ -1,0 +1,266 @@
+{
+  "_readme": [
+    "PS5 Pro watchlist. Copy to config/watchlist.json (or run with --config config/ps5-pro.json).",
+    "Read docs/retailers.md first — it says which of these actually work and which fight back.",
+    "",
+    "Two ways to get a product URL in here:",
+    "  1. Paste it yourself into a target below, then: node src/index.js check <id>",
+    "  2. Let the discovery sources at the bottom find it, with autoWatch on.",
+    "",
+    "Everything here is DISABLED by default except Best Buy's official API and the",
+    "discovery sources. Enable a retailer once `check` shows it reads the page correctly."
+  ],
+
+  "defaults": {
+    "intervalMs": 60000,
+    "hotIntervalMs": 10000,
+    "jitterRatio": 0.2,
+    "alertBurst": 3,
+    "burstWindowMs": 600000,
+    "minHostGapMs": 2000,
+    "respectRobots": true,
+    "maxConcurrency": 3
+  },
+
+  "targets": [
+    {
+      "_note": [
+        "BEST BUY — official public API. The most reliable target here by a wide margin:",
+        "documented, key-based, and it never fights bot protection because it is not scraping.",
+        "Get a free key at developer.bestbuy.com, then put it in .env as BESTBUY_API_KEY.",
+        "categoryPath.id abcat0715001 is PlayStation 5 hardware; drop that clause if it filters",
+        "too hard. Run `check bestbuy-api` and read the JSON before trusting the rules."
+      ],
+      "id": "bestbuy-api",
+      "name": "Best Buy (official API)",
+      "url": "https://api.bestbuy.com/v1/products((search=playstation)&(search=5)&(search=pro)&(categoryPath.id=abcat0715001))?apiKey=${BESTBUY_API_KEY}&format=json&pageSize=25&show=sku,name,salePrice,onlineAvailability,inStoreAvailability,orderable,url",
+      "buyUrl": "https://www.bestbuy.com/site/searchpage.jsp?st=ps5+pro",
+      "intervalMs": 30000,
+      "hotIntervalMs": 5000,
+      "maxPrice": 800,
+      "signals": {
+        "replaceDefaults": true,
+        "in_stock": [
+          { "type": "json", "path": "products[].onlineAvailability", "op": "truthy" }
+        ],
+        "preorder": [
+          { "type": "json", "path": "products[].orderable", "op": "equals", "value": "ComingSoon" }
+        ],
+        "out_of_stock": [
+          { "type": "json", "path": "products[].orderable", "op": "equals", "value": "SoldOut" }
+        ]
+      },
+      "priceSignals": [
+        { "type": "json", "path": "products[onlineAvailability].salePrice" },
+        { "type": "json", "path": "products[orderable=ComingSoon].salePrice" },
+        { "type": "json", "path": "products[].salePrice" }
+      ]
+    },
+
+    {
+      "_note": [
+        "PLAYSTATION DIRECT — Sony's own store, and usually the first place a restock lands.",
+        "Paste the real console URL from direct.playstation.com. Sony puts a queue in front of",
+        "drops; this tells you the queue has opened, which is the useful signal.",
+        "Their pages are JS-rendered, so mode is browser."
+      ],
+      "id": "playstation-direct",
+      "name": "PlayStation Direct — PS5 Pro",
+      "url": "https://direct.playstation.com/en-us/consoles",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitFor": "main", "waitUntil": "networkidle" },
+      "intervalMs": 120000,
+      "hotIntervalMs": 20000,
+      "maxPrice": 800,
+      "alertOnChange": true
+    },
+
+    {
+      "_note": [
+        "TARGET — JS-rendered and behind bot management. Browser mode gets through more often",
+        "than plain HTTP, but not always. Paste the real /p/...-/A-<tcin> URL."
+      ],
+      "id": "target",
+      "name": "Target — PS5 Pro",
+      "url": "https://www.target.com/s?searchTerm=playstation+5+pro+console",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitFor": "[data-test='product-title'], [data-test='shippingButton']", "waitUntil": "networkidle" },
+      "intervalMs": 180000,
+      "hotIntervalMs": 30000,
+      "maxPrice": 800,
+      "signals": {
+        "in_stock": [
+          { "type": "selector", "selector": "[data-test='shippingButton']:not([disabled])", "op": "exists" },
+          { "type": "selector", "selector": "[data-test='orderPickupButton']:not([disabled])", "op": "exists" }
+        ],
+        "out_of_stock": [
+          { "type": "text", "op": "matches", "value": "out of stock|sold out|not available at" }
+        ]
+      }
+    },
+
+    {
+      "_note": [
+        "WALMART — the most aggressive bot management of the mainstream retailers. Expect this",
+        "one to get challenged even in browser mode. If it does, stop poking it and use Walmart's",
+        "own 'notify me' list instead; see docs/retailers.md."
+      ],
+      "id": "walmart",
+      "name": "Walmart — PS5 Pro",
+      "url": "https://www.walmart.com/search?q=playstation+5+pro+console",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitFor": "[data-automation-id='product-title'], [data-testid='add-to-cart']", "waitUntil": "networkidle" },
+      "intervalMs": 300000,
+      "hotIntervalMs": 60000,
+      "maxPrice": 800,
+      "signals": {
+        "in_stock": [
+          { "type": "selector", "selector": "[data-automation-id='atc']:not([disabled])", "op": "exists" },
+          { "type": "text", "op": "matches", "value": "\\badd to cart\\b" }
+        ],
+        "out_of_stock": [
+          { "type": "text", "op": "matches", "value": "out of stock|currently unavailable|sold out" }
+        ]
+      }
+    },
+
+    {
+      "_note": [
+        "GAMESTOP — usually the friendliest of the big retailers to a plain HTTP poll.",
+        "Try mode http first; switch to browser only if `check` comes back unknown."
+      ],
+      "id": "gamestop",
+      "name": "GameStop — PS5 Pro",
+      "url": "https://www.gamestop.com/search/?q=playstation+5+pro+console",
+      "enabled": false,
+      "intervalMs": 60000,
+      "hotIntervalMs": 15000,
+      "maxPrice": 800,
+      "signals": {
+        "in_stock": [
+          { "type": "selector", "selector": "button.add-to-cart:not([disabled])", "op": "exists" },
+          { "type": "text", "op": "matches", "value": "\\badd to cart\\b" }
+        ],
+        "out_of_stock": [
+          { "type": "text", "op": "matches", "value": "out of stock|unavailable|sold out" }
+        ]
+      }
+    },
+
+    {
+      "_note": "B&H — generally scrape-tolerant, clean markup, real stock wording on the page.",
+      "id": "bhphoto",
+      "name": "B&H — PS5 Pro",
+      "url": "https://www.bhphotovideo.com/c/search?q=playstation%205%20pro%20console",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitUntil": "networkidle" },
+      "intervalMs": 120000,
+      "hotIntervalMs": 20000,
+      "maxPrice": 800
+    },
+
+    {
+      "_note": "NEWEGG — watch the maxPrice here, it carries a lot of third-party resale listings.",
+      "id": "newegg",
+      "name": "Newegg — PS5 Pro",
+      "url": "https://www.newegg.com/p/pl?d=playstation+5+pro+console",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitUntil": "networkidle" },
+      "intervalMs": 120000,
+      "hotIntervalMs": 20000,
+      "maxPrice": 750
+    },
+
+    {
+      "_note": [
+        "COSTCO — membership-gated, and often bundles. Paste a real product URL if you want this.",
+        "Costco frequently hides price behind sign-in, so the maxPrice guard may not fire."
+      ],
+      "id": "costco",
+      "name": "Costco — PS5 Pro",
+      "url": "https://www.costco.com/CatalogSearch?dept=All&keyword=playstation+5+pro",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitUntil": "networkidle" },
+      "intervalMs": 300000,
+      "hotIntervalMs": 60000,
+      "alertOverPrice": true
+    },
+
+    {
+      "_note": [
+        "AMAZON — realistically the least likely to work. Heavy bot management, and their",
+        "robots.txt disallows much of the product path, so the watcher will skip it by default.",
+        "Use Amazon's own stock alerts, or a price tracker, instead of fighting this one."
+      ],
+      "id": "amazon",
+      "name": "Amazon — PS5 Pro",
+      "url": "https://www.amazon.com/s?k=playstation+5+pro+console",
+      "enabled": false,
+      "mode": "browser",
+      "browser": { "waitUntil": "networkidle" },
+      "intervalMs": 600000,
+      "hotIntervalMs": 120000,
+      "maxPrice": 800
+    }
+  ],
+
+  "discovery": [
+    {
+      "_note": [
+        "Finds the product URL for you instead of you hunting for a SKU. With autoWatch on, a",
+        "new matching listing immediately becomes a watched target — so a brand new PS5 Pro",
+        "bundle page appearing is itself an alert, before it ever has stock.",
+        "exclude keeps accessories and resale listings out of the results."
+      ],
+      "id": "bestbuy-search",
+      "kind": "search",
+      "enabled": true,
+      "url": "https://api.bestbuy.com/v1/products((search=playstation)&(search=5)&(search=pro))?apiKey=${BESTBUY_API_KEY}&format=json&pageSize=50&show=sku,name,salePrice,url,orderable",
+      "keywords": ["/playstation\\s*5\\s*pro/", "/ps5\\s*pro/"],
+      "exclude": ["controller", "dualsense", "headset", "stand", "cover", "charging", "camera", "remote", "disc drive"],
+      "itemsPath": "products[]",
+      "urlPath": "url",
+      "titlePath": "name",
+      "idPath": "sku",
+      "intervalMs": 900000,
+      "autoWatch": true,
+      "watchTemplate": { "intervalMs": 30000, "hotIntervalMs": 5000, "maxPrice": 800 }
+    },
+
+    {
+      "_note": "GameStop search results, scanned for new PS5 Pro listings.",
+      "id": "gamestop-search",
+      "kind": "search",
+      "enabled": false,
+      "url": "https://www.gamestop.com/search/?q={query}",
+      "query": "playstation 5 pro console",
+      "keywords": ["/ps5\\s*pro/", "/playstation\\s*5\\s*pro/"],
+      "exclude": ["controller", "dualsense", "headset", "stand", "cover", "charging", "protector", "skin"],
+      "itemSelector": "a[href*='/products/']",
+      "intervalMs": 900000,
+      "autoWatch": true,
+      "watchTemplate": { "intervalMs": 60000, "hotIntervalMs": 15000, "maxPrice": 800 }
+    },
+
+    {
+      "_note": [
+        "Restock-tracker RSS. Point this at any feed you trust — community trackers and deal",
+        "sites often post a drop a minute or two before you would spot it yourself.",
+        "Replace the URL with a feed you actually follow; this one is a placeholder."
+      ],
+      "id": "restock-feed",
+      "kind": "feed",
+      "enabled": false,
+      "url": "https://www.example.com/restocks.rss",
+      "keywords": ["/ps5\\s*pro/", "/playstation\\s*5\\s*pro/"],
+      "exclude": ["controller", "headset", "accessory"],
+      "intervalMs": 300000
+    }
+  ]
+}
